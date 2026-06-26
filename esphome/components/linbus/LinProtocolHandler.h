@@ -7,6 +7,8 @@
 
 #include "driver/uart.h"
 #include "esp_intr_alloc.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 // Forward Declarations (to avoid circular dependencies)
 class LinSerial;
@@ -23,15 +25,15 @@ class LinSerial;
 
 // LIN frame structure
 typedef struct {
-  uint8_t id;                       //  ID
-  uint8_t dataLength;               // Length of data (1-8 bytes)
+  uint8_t id;                       // ID
+  uint8_t dataLength;               // Length of data bytes
   uint8_t data[LIN_MAX_DATA_SIZE];  // Data bytes
   uint8_t checksum;                 // Checksum byte
 } lin_frame_t;
 
 // Structure to track discovered PIDs
 typedef struct {
-  uint8_t id;                       //  ID
+  uint8_t id;                       // ID
   uint8_t dataLength;               // Length of data observed
   uint8_t data[LIN_MAX_DATA_SIZE];  // Data bytes
   int64_t lastUpdateTime;           // Last time this PID was seen (microseconds)
@@ -39,15 +41,16 @@ typedef struct {
 } lin_discovered_id_t;
 
 typedef struct {
-  uint8_t id;                 //  ID
+  uint8_t id;                 // ID
   uint32_t updateInterval;    // Average interval between updates (ms)
-  int32_t last_send_time_ms;  // Last time this PID was sent (microseconds)
+  int32_t last_send_time_ms;  // Last time this PID was sent (ms)
 } lin_schedule_item_t;
 
 typedef struct {
   uint8_t id;
-  uint8_t dataLength;
+  uint8_t dataLength;                            // Payload plus checksum; 0 marks a free slot
   uint8_t responseData[LIN_MAX_DATA_SIZE + 1];  // last byte = checksum
+  bool enhancedChecksum;
   uint32_t lastResponseTime;
 } lin_respond_data_t;
 // NOTE: Free / unused response slot is now indicated by dataLength == 0 (ID may be any valid value, including 0).
@@ -89,7 +92,8 @@ class LinProtocolHandler {
  public:
   // Pass schedule pointer to constructor
   LinProtocolHandler(LinSerial *serial, int baud_rate, lin_schedule_item_t *schedule,
-                     lin_discovered_id_t *discoveredIDs, lin_respond_data_t *responses);
+                     lin_discovered_id_t *discoveredIDs, lin_respond_data_t *responses, lin_mode_t mode,
+                     SemaphoreHandle_t data_mutex);
   virtual ~LinProtocolHandler();
 
   // Called when a PID is received, to check for registered responses
@@ -113,13 +117,13 @@ class LinProtocolHandler {
   // Statistics methods
   void updateStatistics();
   void resetStatistics();
-  const lin_statistics_t &getStatistics() const { return statistics_; }
+  const lin_statistics_t &getStatistics() const;
   void logStatistics() const;
 
   // Call by ISR handler ‚ to process incoming data
   lin_read_state_t receiveDecode(uint8_t readbyte, uint8_t command);
 
-  uint8_t calculateChecksum(uint8_t id, const uint8_t *data, size_t len);
+  uint8_t calculateChecksum(uint8_t id, const uint8_t *data, size_t len, bool enhanced = true);
 
   void onInterByteTimeout();
 
@@ -127,6 +131,8 @@ class LinProtocolHandler {
   LinSerial *serial_;
   int baud_rate_;
   uint8_t uart_num_;
+  lin_mode_t mode_;
+  SemaphoreHandle_t data_mutex_;
 
   int64_t byte_time_us_;
   int64_t timeout_LinRecieive_;
@@ -155,7 +161,11 @@ class LinProtocolHandler {
 
   // Statistics tracking
   lin_statistics_t statistics_;
+  mutable lin_statistics_t statistics_snapshot_;
   uint8_t unique_id_tracker_[256];  // Bitmap to track unique IDs seen in current window
+
+  bool lockData(TickType_t timeout = portMAX_DELAY) const;
+  void unlockData() const;
 
   // Utility
   // Utility functions

@@ -28,35 +28,6 @@ class LinFrameTrigger : public Trigger<std::vector<uint8_t>, uint8_t> {
   uint8_t lin_id_;
 };
 
-// Action to update LIN response data
-template<typename... Ts> class UpdateResponseAction : public Action<Ts...> {
- public:
-  UpdateResponseAction(LinBusComponent *parent) : parent_(parent) {}
-
-  TEMPLATABLE_VALUE(uint8_t, lin_id)
-
-  void set_data_template(std::function<std::vector<uint8_t>(Ts...)> func) { this->data_func_ = func; }
-  void set_data_static(const std::vector<uint8_t> &data) { this->data_static_ = data; }
-
-  void play(Ts... x) override {
-    auto lin_id = this->lin_id_.value(x...);
-    std::vector<uint8_t> data;
-
-    if (this->data_func_.has_value()) {
-      data = this->data_func_.value()(x...);
-    } else {
-      data = this->data_static_;
-    }
-
-    this->parent_->update_response(lin_id, data);
-  }
-
- protected:
-  LinBusComponent *parent_;
-  optional<std::function<std::vector<uint8_t>(Ts...)>> data_func_;
-  std::vector<uint8_t> data_static_;
-};
-
 class LinBusComponent : public Component {
  public:
   LinBusComponent() = default;
@@ -139,6 +110,35 @@ class LinBusComponent : public Component {
   sensor::Sensor *send_failures_sensor_{nullptr};
   sensor::Sensor *bus_load_sensor_{nullptr};
   sensor::Sensor *error_rate_sensor_{nullptr};
+};
+
+// Action to update LIN response data
+template<typename... Ts> class UpdateResponseAction : public Action<Ts...> {
+ public:
+  UpdateResponseAction(LinBusComponent *parent) : parent_(parent) {}
+
+  TEMPLATABLE_VALUE(uint8_t, lin_id)
+
+  void set_data_template(std::function<std::vector<uint8_t>(Ts...)> func) { this->data_func_ = func; }
+  void set_data_static(const std::vector<uint8_t> &data) { this->data_static_ = data; }
+
+  void play(const Ts &...x) override {
+    auto lin_id = this->lin_id_.value(x...);
+    std::vector<uint8_t> data;
+
+    if (this->data_func_.has_value()) {
+      data = this->data_func_.value()(x...);
+    } else {
+      data = this->data_static_;
+    }
+
+    this->parent_->update_response(lin_id, data);
+  }
+
+ protected:
+  LinBusComponent *parent_;
+  optional<std::function<std::vector<uint8_t>(Ts...)>> data_func_;
+  std::vector<uint8_t> data_static_;
 };
 
 }  // namespace linbus

@@ -6,6 +6,12 @@ esp32:
   framework:
     type: esp-idf
 
+external_components:
+  - source:
+      type: local
+      path: ../../../esphome/components
+    components: [linbus]
+
 logger:
   level: DEBUG
 

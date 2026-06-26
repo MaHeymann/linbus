@@ -6,6 +6,7 @@ import esphome.config_validation as cv
 from esphome.const import CONF_BAUD_RATE, CONF_ID, CONF_MODE, CONF_TRIGGER_ID
 
 DEPENDENCIES = ["esp32"]
+AUTO_LOAD = ["sensor"]
 CODEOWNERS = ["@swifty99"]
 
 # Namespace
@@ -54,34 +55,47 @@ RESPONSE_SCHEMA = cv.Schema(
     }
 )
 
+
+def _validate_mode_config(config):
+    mode = config.get(CONF_MODE, MODE_MASTER)
+    if CONF_SCHEDULE in config and mode != MODE_MASTER:
+        raise cv.Invalid("linbus schedule is only valid with mode: master")
+    if CONF_RESPONSES in config and mode == MODE_LISTENER:
+        raise cv.Invalid("linbus responses are not valid with mode: listener")
+    return config
+
+
 # Main configuration schema
-CONFIG_SCHEMA = cv.Schema(
-    {
-        cv.GenerateID(): cv.declare_id(LinBusComponent),
-        cv.Required(CONF_TX_PIN): pins.gpio_output_pin_schema,
-        cv.Required(CONF_RX_PIN): pins.gpio_input_pin_schema,
-        cv.Optional(CONF_CS_PIN): pins.gpio_output_pin_schema,
-        cv.Optional(CONF_BAUD_RATE, default=19200): cv.int_,
-        cv.Optional(CONF_UART_PORT, default="UART_NUM_1"): cv.string,
-        cv.Optional(CONF_MODE, default=MODE_MASTER): cv.enum(
-            {MODE_MASTER: 0, MODE_SLAVE: 1, MODE_LISTENER: 2}, lower=True
-        ),
-        cv.Optional(CONF_SCHEDULE): cv.All(
-            cv.ensure_list(SCHEDULE_SCHEMA),
-            cv.Length(max=16),
-        ),
-        cv.Optional(CONF_RESPONSES): cv.All(
-            cv.ensure_list(RESPONSE_SCHEMA),
-            cv.Length(max=16),
-        ),
-        cv.Optional(CONF_ON_FRAME): automation.validate_automation(
-            {
-                cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(LinFrameTrigger),
-                cv.Required(CONF_LIN_ID): cv.int_range(min=0, max=63),
-            }
-        ),
-    }
-).extend(cv.COMPONENT_SCHEMA)
+CONFIG_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(LinBusComponent),
+            cv.Required(CONF_TX_PIN): pins.gpio_output_pin_schema,
+            cv.Required(CONF_RX_PIN): pins.gpio_input_pin_schema,
+            cv.Optional(CONF_CS_PIN): pins.gpio_output_pin_schema,
+            cv.Optional(CONF_BAUD_RATE, default=19200): cv.int_,
+            cv.Optional(CONF_UART_PORT, default="UART_NUM_1"): cv.string,
+            cv.Optional(CONF_MODE, default=MODE_MASTER): cv.enum(
+                {MODE_MASTER: 0, MODE_SLAVE: 1, MODE_LISTENER: 2}, lower=True
+            ),
+            cv.Optional(CONF_SCHEDULE): cv.All(
+                cv.ensure_list(SCHEDULE_SCHEMA),
+                cv.Length(max=16),
+            ),
+            cv.Optional(CONF_RESPONSES): cv.All(
+                cv.ensure_list(RESPONSE_SCHEMA),
+                cv.Length(max=16),
+            ),
+            cv.Optional(CONF_ON_FRAME): automation.validate_automation(
+                {
+                    cv.GenerateID(CONF_TRIGGER_ID): cv.declare_id(LinFrameTrigger),
+                    cv.Required(CONF_LIN_ID): cv.int_range(min=0, max=63),
+                }
+            ),
+        }
+    ).extend(cv.COMPONENT_SCHEMA),
+    _validate_mode_config,
+)
 
 
 async def to_code(config):
@@ -149,6 +163,7 @@ async def to_code(config):
             ),
         }
     ),
+    synchronous=True,
 )
 async def update_response_to_code(config, action_id, template_arg, args):
     """Generate code for update_response action."""

@@ -28,6 +28,7 @@ LINCommunication::LINCommunication(uart_port_t uart_num, int tx_pin, int rx_pin,
   memset(schedule_, 0, sizeof(schedule_));
   memset(responses_, 0, sizeof(responses_));
   memset(discoveredIDs_, 0, sizeof(discoveredIDs_));
+  data_mutex_ = xSemaphoreCreateMutex();
 }
 
 LINCommunication::~LINCommunication() {
@@ -35,6 +36,10 @@ LINCommunication::~LINCommunication() {
   lin_protocol_handler_ = nullptr;
   delete lin_serial_;
   lin_serial_ = nullptr;
+  if (data_mutex_ != nullptr) {
+    vSemaphoreDelete(data_mutex_);
+    data_mutex_ = nullptr;
+  }
 }
 
 esp_err_t LINCommunication::init(lin_mode_t mode, int baud_rate) {
@@ -50,7 +55,8 @@ esp_err_t LINCommunication::init(lin_mode_t mode, int baud_rate) {
   lin_serial_ = new LinSerial(uart_num_, tx_pin_, rx_pin_, baud_rate_);
 
   // Now create LinProtocolHandler with valid pointers
-  lin_protocol_handler_ = new LinProtocolHandler(lin_serial_, baud_rate_, schedule_, discoveredIDs_, responses_);
+  lin_protocol_handler_ =
+      new LinProtocolHandler(lin_serial_, baud_rate_, schedule_, discoveredIDs_, responses_, mode_, data_mutex_);
 
   if (cs_pin_ != -1) {
     // Configure CS  pin
@@ -103,9 +109,16 @@ void LINCommunication::uart_event_task_trampoline(void *arg) {
     if (xQueueReceive(q, &evt, wait_ticks) == pdTRUE) {
       switch (evt.type) {
         case UART_DATA: {
-          int r = uart_read_bytes(self->uart_num_, buf, evt.size, 0);
-          for (int i = 0; i < r; ++i) {
-            self->lin_protocol_handler_->receiveDecode(buf[i], 0);
+          size_t remaining = evt.size;
+          while (remaining > 0) {
+            size_t to_read = remaining > sizeof(buf) ? sizeof(buf) : remaining;
+            int r = uart_read_bytes(self->uart_num_, buf, to_read, 0);
+            if (r <= 0)
+              break;
+            remaining -= (size_t) r;
+            for (int i = 0; i < r; ++i) {
+              self->lin_protocol_handler_->receiveDecode(buf[i], 0);
+            }
           }
           // (No manual finalize here; rely on timeout path)
           break;
@@ -129,27 +142,27 @@ void LINCommunication::uart_event_task_trampoline(void *arg) {
 }
 
 bool LINCommunication::lin_process() {
-  // store now us:
-  int64_t now = esp_timer_get_time();
+  if (lin_protocol_handler_ == nullptr)
+    return false;
 
-  // send id if due and store for logging
-  uint8_t id = 0;
-  id = lin_protocol_handler_->master_send();
-
-  // store time master send took:
-  int64_t send_time = esp_timer_get_time() - now;
+  if (mode_ == LIN_MODE_MASTER) {
+    lin_protocol_handler_->master_send();
+  }
 
   // Built‑in self test progression
   if (self_test_enabled_) {
     selfTestTick();
   }
 
+  updateStatistics();
   return true;
 }
 
 // master scheduler functions
 
 bool LINCommunication::master_add_id_schedule(uint8_t id, uint32_t interval_ms) {
+  if (data_mutex_ != nullptr && xSemaphoreTake(data_mutex_, portMAX_DELAY) != pdTRUE)
+    return false;
   // Update existing
   for (size_t i = 0; i < LIN_MAX_ID_RQ_COUNT; i++) {
     if (schedule_[i].updateInterval == 0)
@@ -158,6 +171,8 @@ bool LINCommunication::master_add_id_schedule(uint8_t id, uint32_t interval_ms) 
       schedule_[i].updateInterval = interval_ms;
       schedule_[i].last_send_time_ms = 0;
       ESP_LOGI(TAG, "Updated schedule ID 0x%02X interval %u ms", id, interval_ms);
+      if (data_mutex_ != nullptr)
+        xSemaphoreGive(data_mutex_);
       return true;
     }
   }
@@ -168,14 +183,20 @@ bool LINCommunication::master_add_id_schedule(uint8_t id, uint32_t interval_ms) 
       schedule_[i].updateInterval = interval_ms;
       schedule_[i].last_send_time_ms = 0;
       ESP_LOGI(TAG, "Added schedule ID 0x%02X interval %u ms", id, interval_ms);
+      if (data_mutex_ != nullptr)
+        xSemaphoreGive(data_mutex_);
       return true;
     }
   }
   ESP_LOGW(TAG, "Schedule full, cannot add ID 0x%02X", id);
+  if (data_mutex_ != nullptr)
+    xSemaphoreGive(data_mutex_);
   return false;
 }
 
 bool LINCommunication::master_remove_id_schedule(uint8_t id) {
+  if (data_mutex_ != nullptr && xSemaphoreTake(data_mutex_, portMAX_DELAY) != pdTRUE)
+    return false;
   for (size_t i = 0; i < LIN_MAX_ID_RQ_COUNT; i++) {
     if (schedule_[i].updateInterval == 0)
       continue;
@@ -183,19 +204,26 @@ bool LINCommunication::master_remove_id_schedule(uint8_t id) {
       schedule_[i].updateInterval = 0;  // mark free
       schedule_[i].last_send_time_ms = 0;
       ESP_LOGI(TAG, "Removed schedule ID 0x%02X", id);
+      if (data_mutex_ != nullptr)
+        xSemaphoreGive(data_mutex_);
       return true;
     }
   }
   ESP_LOGW(TAG, "ID 0x%02X not found in schedule", id);
+  if (data_mutex_ != nullptr)
+    xSemaphoreGive(data_mutex_);
   return false;
 }
 
 // response handling functions
-bool LINCommunication::set_response_data(uint8_t id, uint8_t *data, uint8_t data_length) {
+bool LINCommunication::set_response_data(uint8_t id, uint8_t *data, uint8_t data_length, bool enhanced,
+                                         bool preserve_existing_checksum) {
   if (id > 0x3F)
     return false;
   if (data_length > LIN_MAX_DATA_SIZE)
     data_length = LIN_MAX_DATA_SIZE;
+  if (data_mutex_ != nullptr && xSemaphoreTake(data_mutex_, portMAX_DELAY) != pdTRUE)
+    return false;
 
   // If caller wants to clear: data_length == 0
   if (data_length == 0) {
@@ -206,9 +234,14 @@ bool LINCommunication::set_response_data(uint8_t id, uint8_t *data, uint8_t data
         responses_[i].dataLength = 0;  // mark free
         // (optional) zero buffer
         memset(responses_[i].responseData, 0, sizeof(responses_[i].responseData));
+        responses_[i].enhancedChecksum = true;
+        if (data_mutex_ != nullptr)
+          xSemaphoreGive(data_mutex_);
         return true;
       }
     }
+    if (data_mutex_ != nullptr)
+      xSemaphoreGive(data_mutex_);
     return true;  // nothing to clear
   }
 
@@ -217,11 +250,14 @@ bool LINCommunication::set_response_data(uint8_t id, uint8_t *data, uint8_t data
     if (responses_[i].dataLength == 0)
       continue;
     if (responses_[i].id == id) {
+      bool checksum_enhanced = preserve_existing_checksum ? responses_[i].enhancedChecksum : enhanced;
       memcpy(responses_[i].responseData, data, data_length);
-      // Compute checksum (classic/enhanced handled by handler’s calculateChecksum)
-      uint8_t cs = lin_protocol_handler_->calculateChecksum(id, data, data_length);
+      uint8_t cs = lin_protocol_handler_->calculateChecksum(id, data, data_length, checksum_enhanced);
       responses_[i].responseData[data_length] = cs;
+      responses_[i].enhancedChecksum = checksum_enhanced;
       responses_[i].dataLength = data_length + 1;
+      if (data_mutex_ != nullptr)
+        xSemaphoreGive(data_mutex_);
       return true;
     }
   }
@@ -231,12 +267,17 @@ bool LINCommunication::set_response_data(uint8_t id, uint8_t *data, uint8_t data
       continue;
     responses_[i].id = id;  // keep ID
     memcpy(responses_[i].responseData, data, data_length);
-    uint8_t cs = lin_protocol_handler_->calculateChecksum(id, data, data_length);
+    uint8_t cs = lin_protocol_handler_->calculateChecksum(id, data, data_length, enhanced);
     responses_[i].responseData[data_length] = cs;
+    responses_[i].enhancedChecksum = enhanced;
     responses_[i].dataLength = data_length + 1;
     responses_[i].lastResponseTime = 0;
+    if (data_mutex_ != nullptr)
+      xSemaphoreGive(data_mutex_);
     return true;
   }
+  if (data_mutex_ != nullptr)
+    xSemaphoreGive(data_mutex_);
   return false;  // no free slot
 }
 
@@ -244,20 +285,28 @@ bool LINCommunication::get_response_4id(uint8_t id, lin_discovered_id_t *lindata
   if (!lindata) {
     return false;
   }
+  if (data_mutex_ != nullptr && xSemaphoreTake(data_mutex_, portMAX_DELAY) != pdTRUE)
+    return false;
 
   // Search for the ID in discoveredIDs_ array
   for (size_t i = 0; i < LIN_MAX_DISCOVERED_PIDS; i++) {
     if (discoveredIDs_[i].dataLength > 0 && discoveredIDs_[i].id == id) {
       // Found the ID, copy data
       *lindata = discoveredIDs_[i];
+      if (data_mutex_ != nullptr)
+        xSemaphoreGive(data_mutex_);
       return true;
     }
   }
 
+  if (data_mutex_ != nullptr)
+    xSemaphoreGive(data_mutex_);
   return false;
 }
 
 void LINCommunication::dumpReceivedPIDsToLog() const {
+  if (data_mutex_ != nullptr && xSemaphoreTake(data_mutex_, portMAX_DELAY) != pdTRUE)
+    return;
   ESP_LOGI(TAG, "| %-5s | %-4s | %-3s | %-7s | %-8s | %-24s |", "Idx", "ID", "Len", "Count", "Last(ms)", "Data(hex)");
   ESP_LOGI(TAG, "|-------|------|-----|---------|----------|--------------------------|");
   for (size_t i = 0; i < LIN_MAX_DISCOVERED_PIDS; i++) {
@@ -275,6 +324,8 @@ void LINCommunication::dumpReceivedPIDsToLog() const {
              discoveredIDs_[i].dataLength, discoveredIDs_[i].updateCount,
              (esp_timer_get_time() - discoveredIDs_[i].lastUpdateTime) / 1000, dataStr);
   }
+  if (data_mutex_ != nullptr)
+    xSemaphoreGive(data_mutex_);
 }
 
 // TEST stuff
@@ -295,6 +346,8 @@ void LINCommunication::selfTestTick() {
     selfTestInitIfNeeded();
     return;
   }
+  if (data_mutex_ != nullptr && xSemaphoreTake(data_mutex_, portMAX_DELAY) != pdTRUE)
+    return;
   for (size_t i = 0; i < SELF_TEST_MAX_IDS; ++i) {
     auto &st = self_test_stats_[i];
     for (size_t d = 0; d < LIN_MAX_DISCOVERED_PIDS; ++d) {
@@ -325,6 +378,8 @@ void LINCommunication::selfTestTick() {
       }
     }
   }
+  if (data_mutex_ != nullptr)
+    xSemaphoreGive(data_mutex_);
   selfTestEvaluate();
 }
 

@@ -1,6 +1,7 @@
 #include "linbus.h"
 #include "esphome/core/log.h"
 #include "esphome/core/gpio.h"
+#include "soc/soc_caps.h"
 
 namespace esphome {
 namespace linbus {
@@ -19,7 +20,7 @@ void LinBusComponent::set_uart_port_str(const std::string &port) {
     this->uart_port_ = UART_NUM_0;
   else if (port == "UART_NUM_1")
     this->uart_port_ = UART_NUM_1;
-#if SOC_UART_NUM > 2
+#if SOC_UART_HP_NUM > 2
   else if (port == "UART_NUM_2")
     this->uart_port_ = UART_NUM_2;
 #endif
@@ -67,7 +68,8 @@ void LinBusComponent::setup() {
 
   // Apply response configuration
   for (const auto &resp : this->pending_responses_) {
-    this->lin_comm_->set_response_data(resp.id, const_cast<uint8_t *>(resp.data.data()), resp.data.size());
+    this->lin_comm_->set_response_data(resp.id, const_cast<uint8_t *>(resp.data.data()), resp.data.size(),
+                                       resp.enhanced);
   }
   this->pending_responses_.clear();
 
@@ -176,7 +178,8 @@ void LinBusComponent::update_response(uint8_t lin_id, const std::vector<uint8_t>
   }
 
   // Update the response data
-  bool success = this->lin_comm_->set_response_data(lin_id, const_cast<uint8_t *>(data.data()), data.size());
+  bool success =
+      this->lin_comm_->set_response_data(lin_id, const_cast<uint8_t *>(data.data()), data.size(), true, true);
 
   if (success) {
     ESP_LOGD(TAG, "Updated response for LIN ID 0x%02X with %zu bytes", lin_id, data.size());

@@ -1,29 +1,13 @@
 #include "LinSerial.h"
 #include "driver/uart.h"
+#include "esp_idf_version.h"
 #include "esp_log.h"
 #include <cstring>
 #include "esp_timer.h"  // For ets_delay_us or alternative delay
 
 #include "esp_intr_alloc.h"
-extern "C" {
-#include "soc/uart_struct.h"
-#include "hal/uart_ll.h"
-#include "soc/uart_periph.h"
-}
 
 static const char *TAG = "LinSerial";
-
-// Helper to map uart_port_t to dev*
-static inline IRAM_ATTR uart_dev_t *lin_get_dev(uart_port_t n) {
-  switch (n) {
-    case UART_NUM_0:
-      return &UART0;
-    case UART_NUM_1:
-      return &UART1;
-    default:
-      return nullptr;
-  }
-}
 
 LinSerial::LinSerial(uart_port_t uart_num, int tx_pin, int rx_pin, int baud_rate)
     : uart_num_(uart_num), tx_pin_(tx_pin), rx_pin_(rx_pin), baud_rate_(baud_rate) {
@@ -33,7 +17,11 @@ LinSerial::LinSerial(uart_port_t uart_num, int tx_pin, int rx_pin, int baud_rate
                                .stop_bits = UART_STOP_BITS_1,
                                .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
                                .rx_flow_ctrl_thresh = 0,
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+                               .source_clk = UART_SCLK_DEFAULT};
+#else
                                .source_clk = UART_SCLK_APB};
+#endif
 
   ESP_ERROR_CHECK(uart_param_config(uart_num_, &uart_config));
   ESP_ERROR_CHECK(uart_set_pin(uart_num_, tx_pin_, rx_pin_, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));

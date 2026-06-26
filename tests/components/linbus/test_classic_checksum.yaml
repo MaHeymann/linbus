@@ -1,0 +1,29 @@
+esphome:
+  name: linbus-test-classic-checksum
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: ../../../esphome/components
+    components: [linbus]
+
+logger:
+  level: DEBUG
+
+linbus:
+  id: lin_slave
+  tx_pin: GPIO10
+  rx_pin: GPIO6
+  cs_pin: GPIO7
+  baud_rate: 19200
+  uart_port: UART_NUM_1
+  mode: slave
+  responses:
+    - lin_id: 52
+      data: [0x00, 0x80, 0x01]
+      checksum: classic

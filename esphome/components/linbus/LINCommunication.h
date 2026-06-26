@@ -10,6 +10,8 @@
 #include "driver/gpio.h"
 #include "esp_timer.h"
 #include "esp_err.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "LinCommon.h"
 
 // Forward Declarations
@@ -56,9 +58,6 @@ class LinSerial;
 
 // Core constants (define only if not already defined elsewhere)
 
-// LIN operating modes
-typedef enum { LIN_MODE_MASTER, LIN_MODE_SLAVE, LIN_MODE_LISTENER } lin_mode_t;
-
 #include "LinProtocolHandler.h"
 
 class LINCommunication {
@@ -75,7 +74,8 @@ class LINCommunication {
   bool master_remove_id_schedule(uint8_t id);
 
   // Responses
-  bool set_response_data(uint8_t id, uint8_t *data, uint8_t data_length);
+  bool set_response_data(uint8_t id, uint8_t *data, uint8_t data_length, bool enhanced = true,
+                         bool preserve_existing_checksum = false);
   bool get_response_4id(uint8_t id, lin_discovered_id_t *lindata);
 
   // Debug
@@ -100,6 +100,7 @@ class LINCommunication {
   LinSerial *lin_serial_;
   LinProtocolHandler *lin_protocol_handler_;
   bool is_initialized_ = false;
+  mutable SemaphoreHandle_t data_mutex_{nullptr};
 
   lin_schedule_item_t schedule_[LIN_MAX_ID_RQ_COUNT];
   lin_respond_data_t responses_[LIN_MAX_RESPONSES];
