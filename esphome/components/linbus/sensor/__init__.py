@@ -9,11 +9,9 @@ from esphome.const import (
     UNIT_PERCENT,
 )
 
-from .. import CONF_LINBUS_ID, LinBusComponent, linbus_ns
+from .. import CONF_LINBUS_ID, LinBusComponent
 
 DEPENDENCIES = ["linbus"]
-
-LinBusSensor = linbus_ns.class_("LinBusSensor", sensor.Sensor, cg.Component)
 
 # Sensor types
 CONF_MASTER_REQUESTS = "master_requests"

@@ -2,7 +2,7 @@
 
 A LIN (Local Interconnect Network) bus component for ESPHome, for communicating with the many cheap LIN actuators, sensors, fans, flaps, motors, pumps and solenoids found in vehicles.
 
-**Platform:** ESP32 family only (ESP-IDF framework). Validated on ESP32-C3.
+**Platform:** ESP32 family only (ESP-IDF framework). Compile-validated with ESPHome 2026.6.2 on ESP32-C3, ESP32-C6, and ESP32.
 
 ## Status
 
@@ -59,10 +59,10 @@ linbus:
   baud_rate: 19200                  # Optional (default 19200). Common: 9600, 19200, 20000
   uart_port: UART_NUM_1             # Optional (default UART_NUM_1)
   mode: master                      # Optional — master | slave | listener (default master)
-  schedule:                         # Optional — master-only scheduling table (max 16)
+  schedule:                         # Optional - master-only scheduling table (max 16)
     - lin_id: 34
       interval: 100ms
-  responses:                        # Optional — pre-buffered publisher data (max 16)
+  responses:                        # Optional - pre-buffered publisher data (max 16; master/slave only)
     - lin_id: 33
       data: [0x00, 0x00, 0x00, 0x00]
       checksum: enhanced            # enhanced (LIN 2.x, default) | classic (LIN 1.x)
@@ -72,13 +72,17 @@ linbus:
         - lambda: ...
 ```
 
-Frame IDs are 6-bit decimal values (0–63). IDs 60–63 are reserved (diagnostic / future use) and not currently supported.
+Frame IDs are 6-bit decimal values (0–63). IDs 60–63 are diagnostic / reserved IDs. Raw frame scheduling and responses can still use them, but NAD/SID diagnostic services are not implemented.
+
+Configured responses use the selected checksum mode. Use `enhanced` for normal LIN 2.x frames and `classic` for LIN 1.x devices that require it. Diagnostic IDs use classic checksum behavior per LIN rules.
 
 ## Modes
 
 - **master** — drives the bus. Sends frame headers on the configured `schedule`. Also publishes data for any `lin_id` in `responses`.
 - **slave** — listens passively for headers. When a header matches one of this node's `responses`, the node transmits the buffered data.
 - **listener** — receives only, never transmits. Useful for sniffing an existing bus or bench-testing.
+
+Validation enforces those roles: `schedule` is only valid in `master` mode, and `responses` are rejected in `listener` mode.
 
 ## Schedule & Responses — the one rule that matters
 
@@ -148,7 +152,7 @@ sensor:
 
 ## Action: `linbus.update_response`
 
-Updates the pre-buffered data this node publishes for a given `lin_id`. The new bytes are sent the next time that header appears on the bus.
+Updates the pre-buffered data this node publishes for a given `lin_id`. The new bytes are sent the next time that header appears on the bus. If the response already exists in YAML, the action preserves that response's checksum mode. Responses created only by the action default to enhanced checksum.
 
 ```yaml
 number:
@@ -171,7 +175,44 @@ number:
 Parameters:
 - `id` — the `linbus` component ID (optional when only one is configured).
 - `lin_id` — required, 0–63, templatable.
-- `data` — required, 1–8 bytes, static list or lambda returning `std::vector<uint8_t>`.
+- `data` — required, 0–8 bytes, static list or lambda returning `std::vector<uint8_t>`. An empty list clears the configured response for that ID.
+
+## Development Verification
+
+The component test fixtures under [`tests/components/linbus`](tests/components/linbus) load the local component through ESPHome `external_components`, so they compile the code in this repository.
+
+Compile checks:
+
+```bash
+esphome compile tests/components/linbus/test_esp32c3.yaml
+esphome compile tests/components/linbus/test_esp32c6.yaml
+esphome compile tests/components/linbus/test_master.yaml
+esphome compile tests/components/linbus/test_slave.yaml
+esphome compile tests/components/linbus/test_sensors.yaml
+esphome compile tests/components/linbus/test_actions.yaml
+esphome compile tests/components/linbus/test_classic_checksum.yaml
+```
+
+Validation checks that should fail:
+
+```bash
+esphome config tests/components/linbus/test_listener_with_responses_invalid.yaml
+esphome config tests/components/linbus/test_slave_with_schedule_invalid.yaml
+```
+
+Before any ESP32-C6 hardware session, confirm the attached chip with a read-only probe:
+
+```bash
+python3 -m esptool --chip esp32c6 -p /dev/cu.usbmodem1101 chip_id
+```
+
+If `python3 -m esptool` is not installed in the active Python environment, the PlatformIO environment usually provides the same check with:
+
+```bash
+$HOME/.platformio/penv/bin/esptool --chip esp32c6 -p /dev/cu.usbmodem1101 chip_id
+```
+
+Do not upload firmware until the actual LIN transceiver wiring and selected pins have been confirmed. The C6 fixture pins are compile-only placeholders.
 
 ## Diagnostic Sensors
 
@@ -202,7 +243,7 @@ All fields are optional — add only the ones you need.
 ## Current Limitations
 
 - No event-triggered (spontaneous) frames.
-- No diagnostic frames (IDs 60–63) or NAD/SID services.
+- No NAD/SID diagnostic services.
 - No sleep / wake-up signalling.
 - No node configuration services (LIN 2.x config).
 - ESP32 / ESP-IDF only. RP2040, ESP32 Arduino, and ESP8266 from the v1 codebase are **not** supported.

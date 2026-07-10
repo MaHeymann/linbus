@@ -1,0 +1,25 @@
+# Expected to FAIL `esphome config`: baud_rate must be 1000..20000 (UPGRADES.md H6).
+esphome:
+  name: linbus-test-baud-invalid
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: ../../../esphome/components
+    components: [linbus]
+
+logger:
+  level: DEBUG
+
+linbus:
+  id: lin_master
+  tx_pin: GPIO10
+  rx_pin: GPIO6
+  baud_rate: 0
+  uart_port: UART_NUM_1
+  mode: master

@@ -1,6 +1,7 @@
 #include "linbus.h"
 #include "esphome/core/log.h"
 #include "esphome/core/gpio.h"
+#include "soc/soc_caps.h"
 
 namespace esphome {
 namespace linbus {
@@ -19,7 +20,7 @@ void LinBusComponent::set_uart_port_str(const std::string &port) {
     this->uart_port_ = UART_NUM_0;
   else if (port == "UART_NUM_1")
     this->uart_port_ = UART_NUM_1;
-#if SOC_UART_NUM > 2
+#if SOC_UART_HP_NUM > 2
   else if (port == "UART_NUM_2")
     this->uart_port_ = UART_NUM_2;
 #endif
@@ -67,7 +68,8 @@ void LinBusComponent::setup() {
 
   // Apply response configuration
   for (const auto &resp : this->pending_responses_) {
-    this->lin_comm_->set_response_data(resp.id, const_cast<uint8_t *>(resp.data.data()), resp.data.size());
+    this->lin_comm_->set_response_data(resp.id, const_cast<uint8_t *>(resp.data.data()), resp.data.size(),
+                                       resp.enhanced);
   }
   this->pending_responses_.clear();
 
@@ -82,23 +84,24 @@ void LinBusComponent::loop() {
   this->lin_comm_->lin_process();
 
   // Update sensors and log statistics every 10 seconds
-  static uint32_t last_stats_log = 0;
   uint32_t now = millis();
-  if (now - last_stats_log > 10000) {
-    last_stats_log = now;
+  if (now - this->last_stats_log_ > 10000) {
+    this->last_stats_log_ = now;
     const lin_statistics_t &stats = this->lin_comm_->getStatistics();
 
-    // Publish sensor values
+    // Publish sensor values. The counter sensors are STATE_CLASS_TOTAL_INCREASING, so they
+    // must be fed the monotonic lifetime totals, not the per-window counters that reset
+    // every 10 s (which would look like meter resets to Home Assistant). See UPGRADES.md H4.
     if (this->master_requests_sensor_)
-      this->master_requests_sensor_->publish_state(stats.master_requests_sent);
+      this->master_requests_sensor_->publish_state(stats.master_requests_total);
     if (this->id_requests_answered_sensor_)
-      this->id_requests_answered_sensor_->publish_state(stats.id_requests_answered);
+      this->id_requests_answered_sensor_->publish_state(stats.id_requests_answered_total);
     if (this->data_bytes_received_sensor_)
-      this->data_bytes_received_sensor_->publish_state(stats.data_bytes_received);
+      this->data_bytes_received_sensor_->publish_state(stats.data_bytes_received_total);
     if (this->checksum_errors_sensor_)
-      this->checksum_errors_sensor_->publish_state(stats.checksum_errors);
+      this->checksum_errors_sensor_->publish_state(stats.checksum_errors_total);
     if (this->send_failures_sensor_)
-      this->send_failures_sensor_->publish_state(stats.master_send_failures);
+      this->send_failures_sensor_->publish_state(stats.master_send_failures_total);
     if (this->bus_load_sensor_)
       this->bus_load_sensor_->publish_state(stats.estimated_bus_load_percent);
     if (this->error_rate_sensor_)
@@ -127,7 +130,10 @@ void LinBusComponent::loop() {
       auto it = this->last_update_counts_.find(lin_id);
       uint32_t last_count = (it != this->last_update_counts_.end()) ? it->second : 0;
 
-      if (frame_data.updateCount > last_count) {
+      // Fire on any change, not just an increase: after LRU eviction + rediscovery the
+      // discovered-table updateCount restarts at 1, which is < a stale high-water mark and
+      // would otherwise silence the trigger forever. See UPGRADES.md H2.
+      if (frame_data.updateCount != last_count) {
         // New frame received! Fire the trigger
         std::vector<uint8_t> data_vec(frame_data.data, frame_data.data + frame_data.dataLength);
         trigger->trigger_frame(data_vec, frame_data.dataLength);
@@ -176,7 +182,8 @@ void LinBusComponent::update_response(uint8_t lin_id, const std::vector<uint8_t>
   }
 
   // Update the response data
-  bool success = this->lin_comm_->set_response_data(lin_id, const_cast<uint8_t *>(data.data()), data.size());
+  bool success =
+      this->lin_comm_->set_response_data(lin_id, const_cast<uint8_t *>(data.data()), data.size(), true, true);
 
   if (success) {
     ESP_LOGD(TAG, "Updated response for LIN ID 0x%02X with %zu bytes", lin_id, data.size());
