@@ -97,8 +97,8 @@ class LINCommunication {
   lin_mode_t mode_;
   int baud_rate_;
 
-  LinSerial *lin_serial_;
-  LinProtocolHandler *lin_protocol_handler_;
+  LinSerial *lin_serial_{nullptr};
+  LinProtocolHandler *lin_protocol_handler_{nullptr};
   bool is_initialized_ = false;
   mutable SemaphoreHandle_t data_mutex_{nullptr};
 
@@ -116,6 +116,7 @@ class LINCommunication {
   bool self_test_enabled_ = false;
   bool self_test_initialized_ = false;
   int64_t self_test_start_time_us_ = 0;
+  int64_t self_test_last_eval_us_ = 0;  // per-instance (was a function-local static, UPGRADES.md M6)
 
   struct SelfTestStat {
     uint8_t id;
@@ -135,11 +136,5 @@ class LINCommunication {
   void selfTestInitIfNeeded();
   void selfTestEvaluate();
 };
-
-/**
- * @brief Define LIN_DEBUG_LOGGING to enable ESP_LOG* debug output in LIN communication.
- * Undefine or comment out to disable all LIN debug logging for real-time testing.
- */
-#define LIN_DEBUG_LOGGING
 
 #endif  // LIN_COMMUNICATION_H

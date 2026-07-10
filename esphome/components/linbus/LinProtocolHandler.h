@@ -13,15 +13,9 @@
 // Forward Declarations (to avoid circular dependencies)
 class LinSerial;
 
-// LIN frame constants
-#define LIN_BREAK_DURATION 13  // Break field duration (13 bits)
-#define LIN_SYNC_BYTE 0x55     // Sync byte value
-
 // Constants for LIN protocol
 #define LIN_BREAK 0x00
 #define LIN_SYNC 0x55
-#define DIAGNOSTIC_FRAME_MASTER 0x3C
-#define DIAGNOSTIC_FRAME_SLAVE 0x3D
 
 // LIN frame structure
 typedef struct {
@@ -41,9 +35,10 @@ typedef struct {
 } lin_discovered_id_t;
 
 typedef struct {
-  uint8_t id;                 // ID
-  uint32_t updateInterval;    // Average interval between updates (ms)
-  int32_t last_send_time_ms;  // Last time this PID was sent (ms)
+  uint8_t id;                  // ID
+  uint32_t updateInterval;     // Send interval (ms); 0 marks a free slot
+  uint32_t last_send_time_ms;  // millis() of last send (unsigned; wrap-safe subtraction)
+  bool sent_once;              // false until first send (replaces the ambiguous 0 sentinel)
 } lin_schedule_item_t;
 
 typedef struct {
@@ -57,16 +52,25 @@ typedef struct {
 
 // LIN Statistics structure (10-second rolling window)
 typedef struct {
-  // Counters
+  // Windowed counters (reset every 10 s; feed the per-second rate fields below)
   uint32_t master_requests_sent;
   uint32_t id_requests_answered;
   uint32_t data_bytes_received;
   uint32_t unique_ids_seen;
 
-  // Error counters
+  // Windowed error counters
   uint32_t master_send_failures;
   uint32_t pid_errors;
   uint32_t checksum_errors;
+  uint32_t checksum_fallback;  // frame accepted with the *other* checksum mode (see UPGRADES.md C2)
+  uint32_t frame_errors;       // UART framing errors / forced resyncs (see UPGRADES.md C3)
+
+  // Lifetime totals (never reset -> safe for STATE_CLASS_TOTAL_INCREASING sensors, UPGRADES.md H4)
+  uint32_t master_requests_total;
+  uint32_t id_requests_answered_total;
+  uint32_t data_bytes_received_total;
+  uint32_t checksum_errors_total;
+  uint32_t master_send_failures_total;
 
   // Bus activity
   uint32_t total_bus_bytes;
@@ -102,17 +106,11 @@ class LinProtocolHandler {
   // Called when a data frame is received
   void onData(uint8_t pid, const uint8_t *data, size_t len);
 
-  // Called on protocol timeout
-  void onTimeout();
-
   // put scheduled ID on bus
   uint8_t master_send();
 
   // Get data for a specific PID, returns length or 0 if not found
   size_t getDataForID(uint8_t id, uint8_t *dataBuf);
-
-  // Dump all received PIDs to log
-  void dumpReceivedPIDsToLog() const;
 
   // Statistics methods
   void updateStatistics();
@@ -127,6 +125,10 @@ class LinProtocolHandler {
 
   void onInterByteTimeout();
 
+  // UART-event hooks (called from the UART event task, see UPGRADES.md C3)
+  void onUartBreak();   // hardware BREAK: finalize any pending frame, resync to the sync byte
+  void onFrameError();  // UART framing/parity error: reset the decoder and count it
+
  private:
   LinSerial *serial_;
   int baud_rate_;
@@ -135,22 +137,13 @@ class LinProtocolHandler {
   SemaphoreHandle_t data_mutex_;
 
   int64_t byte_time_us_;
-  int64_t timeout_LinRecieive_;
   void resetDecodeState();
-
-  // --- Circular buffer for received PIDs/data ---
-  struct ReceivedEntry {
-    uint8_t pid;
-    uint8_t data[16];
-    size_t len;
-  };
 
   lin_read_state_t state_;
   uint8_t currentID_;
   uint8_t currentPIDWithParity_;
   uint8_t currentData_[LIN_MAX_DATA_SIZE + 2];
   uint8_t currentDataCount_;
-  int64_t lastDataReceived;
 
   // Pointer to schedule array and count (owned by LINCommunication)
   lin_schedule_item_t *schedule_;

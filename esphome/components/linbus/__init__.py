@@ -37,11 +37,24 @@ MODE_MASTER = "master"
 MODE_SLAVE = "slave"
 MODE_LISTENER = "listener"
 
+# LIN 2.1 caps the bus at 20 kbit/s; 0 would divide-by-zero in the driver (UPGRADES.md H6).
+UART_PORTS = ["UART_NUM_0", "UART_NUM_1", "UART_NUM_2"]
+
+
+def _validate_interval(value):
+    # 0 ms is the "free slot" sentinel in the C++ scheduler, so an entry with interval: 0ms
+    # would silently never be scheduled. Reject it here. See UPGRADES.md H6.
+    period = cv.positive_time_period_milliseconds(value)
+    if period.total_milliseconds < 1:
+        raise cv.Invalid("interval must be at least 1ms")
+    return period
+
+
 # Validation schemas
 SCHEDULE_SCHEMA = cv.Schema(
     {
         cv.Required(CONF_LIN_ID): cv.int_range(min=0, max=63),
-        cv.Required(CONF_INTERVAL): cv.positive_time_period_milliseconds,
+        cv.Required(CONF_INTERVAL): _validate_interval,
     }
 )
 
@@ -73,8 +86,12 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_TX_PIN): pins.gpio_output_pin_schema,
             cv.Required(CONF_RX_PIN): pins.gpio_input_pin_schema,
             cv.Optional(CONF_CS_PIN): pins.gpio_output_pin_schema,
-            cv.Optional(CONF_BAUD_RATE, default=19200): cv.int_,
-            cv.Optional(CONF_UART_PORT, default="UART_NUM_1"): cv.string,
+            cv.Optional(CONF_BAUD_RATE, default=19200): cv.int_range(
+                min=1000, max=20000
+            ),
+            cv.Optional(CONF_UART_PORT, default="UART_NUM_1"): cv.one_of(
+                *UART_PORTS, upper=True
+            ),
             cv.Optional(CONF_MODE, default=MODE_MASTER): cv.enum(
                 {MODE_MASTER: 0, MODE_SLAVE: 1, MODE_LISTENER: 2}, lower=True
             ),

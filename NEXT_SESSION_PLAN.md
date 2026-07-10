@@ -2,6 +2,20 @@
 
 This plan is for a separate hardware session. The current code change is compile-validated only; do not treat it as a completed LIN transceiver smoke test.
 
+## Update 2026-07-10 — robustness fixes applied
+
+A round of fixes from `UPGRADES.md` has landed (C1–C4, H2/H4/H5/H6/H8/H9, M2/M3/M6/M8).
+See the status table at the top of `UPGRADES.md`. Validation so far, still **no hardware**:
+
+- Host unit test of the protocol core: `tests/host/run.sh` → 35/35 pass.
+- `esphome config` passes for all fixtures; the invalid fixtures still fail as expected.
+- `esphome compile` succeeds for the ESP32, ESP32-C3 and ESP32-C6 fixtures.
+- New negative expectations to lock in the H6 validators: `baud_rate: 0`, `interval: 0ms`
+  and an unknown `uart_port` are now rejected by `esphome config`.
+
+The hardware session below is still required. `NETWORK_TESTS.md` proposes the full
+on-hardware / network test plan; the loopback self-test (A1) is the recommended first check.
+
 ## Current State
 
 - ESPHome compile fixtures now load the local `linbus` component.

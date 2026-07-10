@@ -102,6 +102,9 @@ class LinBusComponent : public Component {
   // Track last seen update count for each LIN ID to detect new frames
   std::unordered_map<uint8_t, uint32_t> last_update_counts_;
 
+  // Per-instance stats-log throttle (was a function-local static, UPGRADES.md M6)
+  uint32_t last_stats_log_{0};
+
   // Sensors for statistics
   sensor::Sensor *master_requests_sensor_{nullptr};
   sensor::Sensor *id_requests_answered_sensor_{nullptr};
