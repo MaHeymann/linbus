@@ -1,3 +1,8 @@
+
+# MOVED!
+
+The content has been superseede by this library collection : https://github.com/kipp-ing/ESPCars
+
 # ESPHome LIN Bus Component
 
 A LIN (Local Interconnect Network) bus component for ESPHome, for communicating with the many cheap LIN actuators, sensors, fans, flaps, motors, pumps and solenoids found in vehicles.
