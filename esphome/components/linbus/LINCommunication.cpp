@@ -133,6 +133,7 @@ void LINCommunication::uart_event_task_trampoline(void *arg) {
               break;
             remaining -= (size_t) r;
             for (int i = 0; i < r; ++i) {
+              ESP_LOGI("LIN-RAW", "RX-Byte: 0x%02X", buf[i]);
               self->lin_protocol_handler_->receiveDecode(buf[i], 0);
             }
           }
@@ -140,6 +141,7 @@ void LINCommunication::uart_event_task_trampoline(void *arg) {
           break;
         }
         case UART_BREAK:
+          ESP_LOGI("LIN-RAW", "UART BREAK erkannt");
           // Authoritative resync: a hardware BREAK ends the previous frame and starts a header.
           self->lin_protocol_handler_->onUartBreak();
           break;
