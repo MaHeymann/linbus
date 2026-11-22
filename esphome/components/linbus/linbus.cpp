@@ -192,6 +192,22 @@ void LinBusComponent::update_response(uint8_t lin_id, const std::vector<uint8_t>
   }
 }
 
+void LinBusComponent::send_frame_once(uint8_t lin_id, const std::vector<uint8_t> &data) {
+  if (this->lin_comm_ == nullptr) {
+    ESP_LOGW(TAG, "Cannot send one-shot frame: LIN communication not initialized");
+    return;
+  }
+  if (data.empty() || data.size() > 8) {
+    ESP_LOGW(TAG, "Cannot send one-shot frame 0x%02X: payload length must be 1..8", lin_id);
+    return;
+  }
+  bool success = this->lin_comm_->master_send_once(lin_id, const_cast<uint8_t *>(data.data()), data.size());
+  if (success)
+    ESP_LOGI(TAG, "Queued one-shot LIN frame 0x%02X (%zu data bytes)", lin_id, data.size());
+  else
+    ESP_LOGW(TAG, "Failed to queue one-shot LIN frame 0x%02X", lin_id);
+}
+
 // Statistics getters
 uint32_t LinBusComponent::get_master_requests_sent() const {
   if (this->lin_comm_ == nullptr)
