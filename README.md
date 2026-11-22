@@ -182,6 +182,26 @@ Parameters:
 - `lin_id` — required, 0–63, templatable.
 - `data` — required, 0–8 bytes, static list or lambda returning `std::vector<uint8_t>`. An empty list clears the configured response for that ID.
 
+## Action: `linbus.send_frame_once`
+
+Queues one master header for the requested ID and transmits the supplied 1–8 data bytes as its response. After a successful transmission, the temporary schedule entry and response buffer are cleared. This is intended for command frames that must be sent only after an explicit user action; do not also add the same ID to the periodic `schedule:`.
+
+```yaml
+button:
+  - platform: template
+    name: "Send command"
+    on_press:
+      - linbus.send_frame_once:
+          id: lin_master
+          lin_id: 11
+          data: [0x01, 0x03, 0x00, 0x00, 0x00, 0x7B, 0x00, 0x00]
+```
+
+Parameters:
+- `id` — the `linbus` component ID.
+- `lin_id` — required, 0–63.
+- `data` — required, 1–8 bytes, static list or lambda returning `std::vector<uint8_t>`.
+
 ## Development Verification
 
 The component test fixtures under [`tests/components/linbus`](tests/components/linbus) load the local component through ESPHome `external_components`, so they compile the code in this repository.
