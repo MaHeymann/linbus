@@ -196,6 +196,7 @@ bool LINCommunication::master_add_id_schedule(uint8_t id, uint32_t interval_ms) 
       schedule_[i].updateInterval = interval_ms;
       schedule_[i].last_send_time_ms = 0;
       schedule_[i].sent_once = false;
+      schedule_[i].one_shot = false;
       ESP_LOGI(TAG, "Updated schedule ID 0x%02X interval %u ms", id, interval_ms);
       if (data_mutex_ != nullptr)
         xSemaphoreGive(data_mutex_);
@@ -209,6 +210,7 @@ bool LINCommunication::master_add_id_schedule(uint8_t id, uint32_t interval_ms) 
       schedule_[i].updateInterval = interval_ms;
       schedule_[i].last_send_time_ms = 0;
       schedule_[i].sent_once = false;
+      schedule_[i].one_shot = false;
       ESP_LOGI(TAG, "Added schedule ID 0x%02X interval %u ms", id, interval_ms);
       if (data_mutex_ != nullptr)
         xSemaphoreGive(data_mutex_);
@@ -221,6 +223,43 @@ bool LINCommunication::master_add_id_schedule(uint8_t id, uint32_t interval_ms) 
   return false;
 }
 
+bool LINCommunication::master_add_id_schedule_once(uint8_t id) {
+  if (mode_ != LIN_MODE_MASTER || id > 0x3F)
+    return false;
+  if (data_mutex_ != nullptr && xSemaphoreTake(data_mutex_, portMAX_DELAY) != pdTRUE)
+    return false;
+  for (size_t i = 0; i < LIN_MAX_ID_RQ_COUNT; i++) {
+    if (schedule_[i].updateInterval == 0) {
+      schedule_[i].id = id;
+      schedule_[i].updateInterval = 1;
+      schedule_[i].last_send_time_ms = 0;
+      schedule_[i].sent_once = false;
+      schedule_[i].one_shot = true;
+      ESP_LOGI(TAG, "Queued one-shot master frame for ID 0x%02X", id);
+      if (data_mutex_ != nullptr)
+        xSemaphoreGive(data_mutex_);
+      return true;
+    }
+  }
+  ESP_LOGW(TAG, "Schedule full; cannot queue one-shot ID 0x%02X", id);
+  if (data_mutex_ != nullptr)
+    xSemaphoreGive(data_mutex_);
+  return false;
+}
+
+bool LINCommunication::master_send_once(uint8_t id, uint8_t *data, uint8_t data_length) {
+  if (mode_ != LIN_MODE_MASTER || id > 0x3F || data == nullptr || data_length == 0 ||
+      data_length > LIN_MAX_DATA_SIZE)
+    return false;
+  if (!set_response_data(id, data, data_length, true, false))
+    return false;
+  if (!master_add_id_schedule_once(id)) {
+    set_response_data(id, nullptr, 0);
+    return false;
+  }
+  return true;
+}
+
 bool LINCommunication::master_remove_id_schedule(uint8_t id) {
   if (data_mutex_ != nullptr && xSemaphoreTake(data_mutex_, portMAX_DELAY) != pdTRUE)
     return false;
@@ -231,6 +270,7 @@ bool LINCommunication::master_remove_id_schedule(uint8_t id) {
       schedule_[i].updateInterval = 0;  // mark free
       schedule_[i].last_send_time_ms = 0;
       schedule_[i].sent_once = false;
+      schedule_[i].one_shot = false;
       ESP_LOGI(TAG, "Removed schedule ID 0x%02X", id);
       if (data_mutex_ != nullptr)
         xSemaphoreGive(data_mutex_);

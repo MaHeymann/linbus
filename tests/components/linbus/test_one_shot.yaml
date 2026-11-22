@@ -1,0 +1,33 @@
+esphome:
+  name: linbus-test-one-shot
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+external_components:
+  - source:
+      type: local
+      path: ../../../esphome/components
+    components: [linbus]
+
+logger:
+  level: DEBUG
+
+linbus:
+  id: lin_master
+  tx_pin: GPIO10
+  rx_pin: GPIO6
+  baud_rate: 9600
+  uart_port: UART_NUM_1
+  mode: master
+
+button:
+  - platform: template
+    name: "Send one-shot LIN frame"
+    on_press:
+      - linbus.send_frame_once:
+          id: lin_master
+          lin_id: 11
+          data: [0x01, 0x03, 0x00, 0x00, 0x00, 0x7B, 0x00, 0x00]

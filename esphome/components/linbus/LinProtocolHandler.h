@@ -39,6 +39,7 @@ typedef struct {
   uint32_t updateInterval;     // Send interval (ms); 0 marks a free slot
   uint32_t last_send_time_ms;  // millis() of last send (unsigned; wrap-safe subtraction)
   bool sent_once;              // false until first send (replaces the ambiguous 0 sentinel)
+  bool one_shot;               // clear schedule and response after one successful response
 } lin_schedule_item_t;
 
 typedef struct {

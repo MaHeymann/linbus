@@ -49,12 +49,26 @@ void LinProtocolHandler::onID(uint8_t id) {
     return;
   for (size_t i = 0; i < LIN_MAX_RESPONSES; ++i) {
     if (responses_[i].id == id && responses_[i].dataLength) {
-      serial_->writeBytes(responses_[i].responseData, responses_[i].dataLength);
-
-      // Update statistics - ID request answered
-      statistics_.id_requests_answered++;
-      statistics_.id_requests_answered_total++;
-      statistics_.total_bus_bytes += responses_[i].dataLength;
+      const uint8_t response_length = responses_[i].dataLength;
+      bool sent = serial_->writeBytes(responses_[i].responseData, response_length);
+      if (sent) {
+        // One-shot master requests are retired only after the payload was sent.
+        for (size_t j = 0; j < LIN_MAX_ID_RQ_COUNT; ++j) {
+          if (schedule_[j].updateInterval != 0 && schedule_[j].id == id && schedule_[j].one_shot) {
+            schedule_[j].updateInterval = 0;
+            schedule_[j].last_send_time_ms = 0;
+            schedule_[j].sent_once = false;
+            schedule_[j].one_shot = false;
+            responses_[i].dataLength = 0;
+            memset(responses_[i].responseData, 0, sizeof(responses_[i].responseData));
+            ESP_LOGI(TAG, "One-shot LIN frame 0x%02X transmitted; schedule and response cleared", id);
+            break;
+          }
+        }
+        statistics_.id_requests_answered++;
+        statistics_.id_requests_answered_total++;
+        statistics_.total_bus_bytes += response_length;
+      }
       unlockData();
       return;
     }

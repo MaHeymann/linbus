@@ -71,6 +71,8 @@ class LINCommunication {
 
   // Master scheduler
   bool master_add_id_schedule(uint8_t id, uint32_t interval_ms);
+  bool master_add_id_schedule_once(uint8_t id);
+  bool master_send_once(uint8_t id, uint8_t *data, uint8_t data_length);
   bool master_remove_id_schedule(uint8_t id);
 
   // Responses
