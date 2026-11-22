@@ -54,6 +54,7 @@ class LinBusComponent : public Component {
 
   // Actions
   void update_response(uint8_t lin_id, const std::vector<uint8_t> &data);
+  void send_frame_once(uint8_t lin_id, const std::vector<uint8_t> &data);
 
   // Statistics getters
   uint32_t get_master_requests_sent() const;
@@ -113,6 +114,24 @@ class LinBusComponent : public Component {
   sensor::Sensor *send_failures_sensor_{nullptr};
   sensor::Sensor *bus_load_sensor_{nullptr};
   sensor::Sensor *error_rate_sensor_{nullptr};
+};
+
+// Action to send one LIN master frame and clear its temporary response afterwards
+template<typename... Ts> class SendFrameOnceAction : public Action<Ts...> {
+ public:
+  SendFrameOnceAction(LinBusComponent *parent) : parent_(parent) {}
+  TEMPLATABLE_VALUE(uint8_t, lin_id)
+  void set_data_template(std::function<std::vector<uint8_t>(Ts...)> func) { this->data_func_ = func; }
+  void set_data_static(const std::vector<uint8_t> &data) { this->data_static_ = data; }
+  void play(const Ts &...x) override {
+    auto id = this->lin_id_.value(x...);
+    std::vector<uint8_t> data = this->data_func_.has_value() ? this->data_func_.value()(x...) : this->data_static_;
+    this->parent_->send_frame_once(id, data);
+  }
+ protected:
+  LinBusComponent *parent_;
+  optional<std::function<std::vector<uint8_t>(Ts...)>> data_func_;
+  std::vector<uint8_t> data_static_;
 };
 
 // Action to update LIN response data
